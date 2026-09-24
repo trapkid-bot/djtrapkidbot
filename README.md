@@ -117,3 +117,8 @@ not Next.js config:
 
 When assembled by the App Builder, these are configured for you (logo upload, color,
 font, and app name are injected at deploy time).
+
+
+## Deployment
+
+Production deployments are connected to the `main` branch. Pushing a commit to `main` triggers the connected Vercel project to build and deploy the latest source.
