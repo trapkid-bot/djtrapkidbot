@@ -15,6 +15,7 @@ import { generateUrlWithRedirect } from '@/utils/url-redirect-utils';
 import { Buy, ProposalOpenContract } from '@deriv/api-types';
 import { TStores } from '@deriv/stores/types';
 import { localize } from '@deriv-com/translations';
+import { AnalyzerBridgeService } from '@/services/analyzer-bridge.service';
 import { TDbot } from 'Types';
 import RootStore from './root-store';
 
@@ -31,6 +32,7 @@ export default class RunPanelStore {
     core: TStores;
     disposeReactionsFn: () => void;
     timer: NodeJS.Timeout | null;
+    analyzer_monitor_timer: ReturnType<typeof setInterval> | null;
 
     constructor(root_store: RootStore, core: TStores) {
         makeObservable(this, {
@@ -96,6 +98,7 @@ export default class RunPanelStore {
         this.core = core;
         this.disposeReactionsFn = this.registerReactions();
         this.timer = null;
+        this.analyzer_monitor_timer = null;
     }
 
     active_index = 0;
@@ -160,6 +163,36 @@ export default class RunPanelStore {
         });
     };
 
+    startAnalyzerMonitor = (signalId?: string) => {
+        this.stopAnalyzerMonitor();
+        this.analyzer_monitor_timer = setInterval(async () => {
+            try {
+                const status = await AnalyzerBridgeService.getStatus();
+                if (signalId && status.signal?.signalId && status.signal.signalId !== signalId) return;
+
+                if (AnalyzerBridgeService.hasExit(status)) {
+                    if (this.has_open_contract && !this.is_sell_requested) {
+                        this.onClickSell();
+                    }
+                    return;
+                }
+
+                if (status.remainingSeconds !== null && status.remainingSeconds <= 0 && this.is_running) {
+                    this.stopBot();
+                }
+            } catch {
+                // The floating widget reports the connection state; do not crash the bot loop.
+            }
+        }, 300);
+    };
+
+    stopAnalyzerMonitor = () => {
+        if (this.analyzer_monitor_timer) {
+            clearInterval(this.analyzer_monitor_timer);
+            this.analyzer_monitor_timer = null;
+        }
+    };
+
     onRunButtonClick = async () => {
         let timer_counter = 1;
         if (window.sendRequestsStatistic) {
@@ -184,6 +217,24 @@ export default class RunPanelStore {
             this.showLoginDialog();
             return;
         }
+
+        // TrapKid Analyzer-linked run: fetch the currently locked signal before
+        // allowing the DBot execution engine to start.
+        let analyzerStatus;
+        try {
+            analyzerStatus = await AnalyzerBridgeService.getStatus();
+        } catch (error) {
+            this.showErrorMessage('TrapKid Analyzer is not connected. Start the Analyzer on port 5003 and try Run again.');
+            return;
+        }
+
+        if (!AnalyzerBridgeService.isLocked(analyzerStatus)) {
+            this.showErrorMessage('No active Analyzer signal is locked. Analyze/lock a market first, then press Run.');
+            return;
+        }
+
+        const analyzerSignal = analyzerStatus.signal;
+        (window as any).__TRAPKID_ANALYZER_SIGNAL = analyzerSignal;
 
         /**
          * Due to Apple's policy on cellular data usage in ios audioElement.play() should be initially called on
@@ -213,6 +264,7 @@ export default class RunPanelStore {
             summary_card.clear();
             this.setContractStage(contract_stages.STARTING);
             this.dbot.runBot();
+            this.startAnalyzerMonitor(analyzerSignal?.signalId);
         });
         this.setShowBotStopMessage(false);
     };
@@ -244,6 +296,7 @@ export default class RunPanelStore {
     };
 
     stopBot = () => {
+        this.stopAnalyzerMonitor();
         const { ui } = this.core;
 
         this.dbot.stopBot();
@@ -843,6 +896,7 @@ export default class RunPanelStore {
     };
 
     onUnmount = () => {
+        this.stopAnalyzerMonitor();
         const { journal, summary_card, transactions } = this.root_store;
 
         if (!this.is_running) {
