@@ -11,6 +11,7 @@ import { StoreProvider } from '@/hooks/useStore';
 import { isPreviewMode, PREVIEW_BASE_PATH } from '@/utils/is-preview-mode';
 import { localize, TranslationProvider } from '@deriv-com/translations';
 import CoreStoreProvider from './CoreStoreProvider';
+import AnalyzerBridgeWidget from '@/components/analyzer-bridge-widget/analyzer-bridge-widget';
 import i18nInstance from './i18n';
 import './app-root.scss';
 
@@ -113,7 +114,12 @@ function App() {
         handleCallback();
     }, []);
 
-    return <RouterProvider router={router} />;
+    return (
+        <>
+            <RouterProvider router={router} />
+            <AnalyzerBridgeWidget />
+        </>
+    );
 }
 
 export default App;
