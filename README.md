@@ -122,3 +122,16 @@ font, and app name are injected at deploy time).
 ## Deployment
 
 Production deployments are connected to the `main` branch. Pushing a commit to `main` triggers the connected Vercel project to build and deploy the latest source.
+
+
+## TrapKid Analyzer synchronization
+
+The bot now includes TrapKid Analyzer Blockly blocks and an Analyzer-driven Matches XML strategy.
+
+- Analyzer default endpoint: `http://localhost:5003`
+- The browser consumes the Analyzer status instead of opening a second Deriv tick stream.
+- `TrapKid Analyzer Match Purchase` waits for a valid locked signal and uses its hot digit as the DIGITMATCH prediction for the next purchase.
+- `TrapKid Analyzer: Wait for exit then sell` is available only for contracts that support early selling.
+- Sample strategy: `src/xml/trapkid_analyzer_matches.xml`
+
+For a public deployment, the Analyzer URL must be reachable by the user's browser; set `VITE_ANALYZER_URL` or `NEXT_PUBLIC_ANALYZER_URL` when using a public bridge/tunnel.
