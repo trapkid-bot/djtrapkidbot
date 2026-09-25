@@ -127,4 +127,63 @@ export class AnalyzerBridgeService {
             (status.hotDigit !== null && status.currentDigit === status.hotDigit && /LOCK|WAIT|HOT/.test(state))
         );
     }
+
+    static async waitForSignal(timeoutMs = 35000, pollMs = 250): Promise<AnalyzerStatus> {
+        const started = Date.now();
+        let lastError: any = null;
+
+        while (Date.now() - started < timeoutMs) {
+            try {
+                const status = await this.getStatus();
+                if (this.isLocked(status)) return status;
+                lastError = null;
+            } catch (error) {
+                lastError = error;
+            }
+            await new Promise(resolve => setTimeout(resolve, pollMs));
+        }
+
+        if (lastError) {
+            throw new Error(`TrapKid Analyzer unavailable: ${lastError?.message || lastError}`);
+        }
+        throw new Error('TrapKid Analyzer did not produce a valid locked signal before timeout.');
+    }
+
+    static async waitForExit(timeoutMs = 35000, pollMs = 250): Promise<AnalyzerStatus> {
+        const started = Date.now();
+
+        while (Date.now() - started < timeoutMs) {
+            const status = await this.getStatus();
+            if (this.hasExit(status)) return status;
+            await new Promise(resolve => setTimeout(resolve, pollMs));
+        }
+
+        throw new Error('TrapKid Analyzer exit signal timed out.');
+    }
+
+    static async getHotDigit(): Promise<number> {
+        const status = await this.getStatus();
+        const digit = status.hotDigit ?? status.lockedDigit ?? status.signal?.prediction;
+        if (digit === null || digit === undefined || !Number.isFinite(Number(digit))) {
+            throw new Error('TrapKid Analyzer has no locked hot digit.');
+        }
+        return Number(digit);
+    }
+
+    static async getCurrentDigit(): Promise<number> {
+        const status = await this.getStatus();
+        if (status.currentDigit === null || !Number.isFinite(Number(status.currentDigit))) {
+            throw new Error('TrapKid Analyzer has no current digit.');
+        }
+        return Number(status.currentDigit);
+    }
+
+    static async isConnected(): Promise<boolean> {
+        try {
+            const status = await this.getStatus();
+            return status.ok !== false;
+        } catch {
+            return false;
+        }
+    }
 }
