@@ -1,0 +1,1 @@
+import './trapkid_analyzer';
