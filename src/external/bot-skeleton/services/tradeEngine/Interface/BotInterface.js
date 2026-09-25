@@ -9,6 +9,26 @@ const getBotInterface = tradeEngine => {
         start: (...args) => tradeEngine.start(...args),
         stop: (...args) => tradeEngine.stop(...args),
         purchase: contract_type => tradeEngine.purchase(contract_type),
+        purchaseWithPrediction: async (contract_type, prediction) => {
+            const numericPrediction = Number(prediction);
+            if (!Number.isInteger(numericPrediction) || numericPrediction < 0 || numericPrediction > 9) {
+                throw new Error('TrapKid Analyzer returned an invalid digit prediction.');
+            }
+
+            if (!tradeEngine.tradeOptions) {
+                throw new Error('Trade options are not initialized.');
+            }
+
+            // The custom TrapKid purchase block uses stake-based contracts by default.
+            // Updating tradeOptions immediately before purchase makes the Analyzer's
+            // locked digit the prediction for this individual contract.
+            tradeEngine.tradeOptions = {
+                ...tradeEngine.tradeOptions,
+                prediction: numericPrediction,
+            };
+
+            return tradeEngine.purchase(contract_type);
+        },
         getAskPrice: contract_type => Number(getProposal(contract_type, tradeEngine).ask_price),
         getPayout: contract_type => Number(getProposal(contract_type, tradeEngine).payout),
         getPurchaseReference: () => tradeEngine.getPurchaseReference(),
