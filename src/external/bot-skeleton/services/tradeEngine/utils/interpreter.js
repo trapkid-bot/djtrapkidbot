@@ -4,6 +4,7 @@ import JSInterpreter from '@deriv/js-interpreter';
 import { unrecoverable_errors } from '../../../constants/messages';
 import { observer as globalObserver } from '../../../utils/observer';
 import { api_base } from '../../api/api-base';
+import { AnalyzerBridgeService } from '@/services/analyzer-bridge.service';
 import Interface from '../Interface';
 import { createScope } from './cliTools';
 
@@ -99,6 +100,32 @@ const Interpreter = () => {
         const { getTicksInterface, alert, prompt, sleep, console: custom_console } = bot_interface;
         const ticks_interface = getTicksInterface;
 
+        const trapkid_analyzer = {
+            waitForSignal: createAsync(js_interpreter, () => AnalyzerBridgeService.waitForSignal()),
+            getHotDigit: createAsync(js_interpreter, () => AnalyzerBridgeService.getHotDigit()),
+            getCurrentDigit: createAsync(js_interpreter, () => AnalyzerBridgeService.getCurrentDigit()),
+            isConnected: createAsync(js_interpreter, () => AnalyzerBridgeService.isConnected()),
+            purchaseMatch: createAsync(js_interpreter, async () => {
+                const status = await AnalyzerBridgeService.waitForSignal();
+                const prediction = status.hotDigit ?? status.lockedDigit ?? status.signal?.prediction;
+
+                if (prediction === null || prediction === undefined) {
+                    throw new Error('TrapKid Analyzer locked signal has no prediction digit.');
+                }
+
+                return bot_interface.purchaseWithPrediction('DIGITMATCH', Number(prediction));
+            }),
+            waitForExitAndSell: createAsync(js_interpreter, async () => {
+                await AnalyzerBridgeService.waitForExit();
+                if (!bot_interface.isSellAvailable()) {
+                    throw new Error(
+                        'Analyzer exit received, but the active contract does not support early selling. Use a sellable contract for Analyzer early-exit mode.'
+                    );
+                }
+                return bot_interface.sellAtMarket();
+            }),
+        };
+
         js_interpreter.setProperty(scope, 'console', js_interpreter.nativeToPseudo(custom_console));
         js_interpreter.setProperty(scope, 'alert', js_interpreter.nativeToPseudo(alert));
         js_interpreter.setProperty(scope, 'prompt', js_interpreter.nativeToPseudo(prompt));
@@ -137,6 +164,11 @@ const Interpreter = () => {
             createAsync(js_interpreter, bot_interface.sellAtMarket)
         );
         js_interpreter.setProperty(scope, 'Bot', pseudo_bot_interface);
+        const pseudo_trapkid_analyzer = js_interpreter.nativeToPseudo({});
+        Object.entries(trapkid_analyzer).forEach(([name, fn]) => {
+            js_interpreter.setProperty(pseudo_trapkid_analyzer, name, fn);
+        });
+        js_interpreter.setProperty(scope, 'TrapKidAnalyzer', pseudo_trapkid_analyzer);
         js_interpreter.setProperty(
             scope,
             'watch',
