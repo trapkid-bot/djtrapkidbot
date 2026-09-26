@@ -120,7 +120,14 @@ export default class TradeEngine extends Balance(Purchase(Sell(OpenContract(Prop
             // response, if there's none after x seconds. Send an explicit request, which _should_
             // solve the issue. This is a backup!
             const subscription = api_base.api.onMessage().subscribe(({ data }) => {
-                if (data.msg_type === 'transaction' && data.transaction.action === 'sell') {
+                if (data.msg_type === 'transaction' && data.transaction) {
+                    // Deriv's authenticated transaction stream is the authoritative
+                    // ledger for buy/sell transaction IDs and balance_after.
+                    // Keep the raw event available to the transaction store so the
+                    // UI never has to infer settlement from journal/statistics.
+                    globalObserver.emit('deriv.transaction', data.transaction);
+
+                    if (data.transaction.action === 'sell') {
                     this.transaction_recovery_timeout = setTimeout(() => {
                         const { contract } = this.data;
                         const is_same_contract = contract.contract_id === data.transaction.contract_id;
