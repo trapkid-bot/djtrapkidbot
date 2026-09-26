@@ -28,9 +28,6 @@ export default class TransactionsStore {
         this.root_store = root_store;
         this.core = core;
         this.is_transaction_details_modal_open = false;
-        globalObserver.register('bot.contract', this.onBotContractEvent);
-        globalObserver.register('deriv.transaction', this.onDerivTransactionEvent);
-        this.disposeReactionsFn = this.registerReactions();
 
         makeObservable(this, {
             elements: observable,
@@ -41,6 +38,7 @@ export default class TransactionsStore {
             is_transaction_details_modal_open: observable,
             transactions: computed,
             onBotContractEvent: action.bound,
+            onDerivTransactionEvent: action.bound,
             pushTransaction: action.bound,
             clear: action.bound,
             registerReactions: action.bound,
@@ -49,6 +47,10 @@ export default class TransactionsStore {
             sortOutPositionsBeforeAction: action.bound,
             recoverPendingContractsById: action.bound,
         });
+
+        globalObserver.register('bot.contract', this.onBotContractEvent);
+        globalObserver.register('deriv.transaction', this.onDerivTransactionEvent);
+        this.disposeReactionsFn = this.registerReactions();
     }
     TRANSACTION_CACHE = 'transaction_cache';
 
