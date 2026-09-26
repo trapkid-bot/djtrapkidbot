@@ -33,6 +33,11 @@ export default Engine =>
 
                     if (sell_response) {
                         const { sold_for } = sell_response.sell;
+
+                        // Authoritative Deriv sell ledger: contract ID, sell
+                        // transaction ID, realized sell value and balance_after.
+                        globalObserver.emit('deriv.contract.sell', sell_response.sell);
+
                         log(LogTypes.SELL, { sold_for });
                     }
 
