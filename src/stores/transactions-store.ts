@@ -4,6 +4,7 @@ import { formatDate, isEnded } from '@/components/shared';
 import { LogTypes } from '@/external/bot-skeleton';
 import { ProposalOpenContract } from '@deriv/api-types';
 import { TPortfolioPosition, TStores } from '@deriv/stores/types';
+import { observer as globalObserver } from '@/external/bot-skeleton/utils/observer';
 import { TContractInfo } from '../components/summary/summary-card.types';
 import { transaction_elements } from '../constants/transactions';
 import { getStoredItemsByKey, getStoredItemsByUser, setStoredItemsByKey } from '../utils/session-storage';
@@ -27,6 +28,8 @@ export default class TransactionsStore {
         this.root_store = root_store;
         this.core = core;
         this.is_transaction_details_modal_open = false;
+        globalObserver.register('bot.contract', this.onBotContractEvent);
+        globalObserver.register('deriv.transaction', this.onDerivTransactionEvent);
         this.disposeReactionsFn = this.registerReactions();
 
         makeObservable(this, {
@@ -55,6 +58,12 @@ export default class TransactionsStore {
     recovered_transactions: number[] = [];
     is_called_proposal_open_contract = false;
     is_transaction_details_modal_open = false;
+
+    // Raw Deriv transaction notifications are kept separately until the matching
+    // proposal_open_contract message arrives. This prevents a race between the
+    // transaction stream and the contract stream from losing sell transaction IDs
+    // or balance_after.
+    deriv_ledger: Record<string, any> = {};
 
     get transactions(): TTransaction[] {
         if (this.core?.client?.loginid) return this.elements[this.core?.client?.loginid] ?? [];
@@ -106,8 +115,84 @@ export default class TransactionsStore {
         this.is_transaction_details_modal_open = is_open;
     };
 
+    onDerivTransactionEvent(transaction: any) {
+        if (!transaction?.contract_id) return;
+
+        const contractId = String(transaction.contract_id);
+        const previous = this.deriv_ledger[contractId] || {};
+        const action = String(transaction.action || '').toLowerCase();
+
+        const next = {
+            ...previous,
+            contract_id: transaction.contract_id,
+            currency: transaction.currency ?? previous.currency,
+            balance_after:
+                transaction.balance_after !== undefined
+                    ? Number(transaction.balance_after)
+                    : previous.balance_after,
+        };
+
+        if (action === 'buy') {
+            next.buy_transaction_id = transaction.transaction_id;
+            next.transaction_ids = {
+                ...(previous.transaction_ids || {}),
+                buy: transaction.transaction_id,
+            };
+        }
+
+        if (action === 'sell') {
+            next.sell_transaction_id = transaction.transaction_id;
+            next.sell_price =
+                transaction.amount !== undefined ? Math.abs(Number(transaction.amount)) : previous.sell_price;
+            next.bid_price = next.sell_price;
+            next.payout = next.sell_price;
+            next.transaction_ids = {
+                ...(previous.transaction_ids || {}),
+                sell: transaction.transaction_id,
+            };
+        }
+
+        this.deriv_ledger[contractId] = next;
+
+        // Deriv's transaction stream is also the authoritative account-balance
+        // source for this ledger entry.
+        if (next.balance_after !== undefined && Number.isFinite(Number(next.balance_after))) {
+            this.core?.client?.setBalance?.(String(next.balance_after));
+        }
+
+        const current_account = this.core?.client?.loginid as string;
+        const index = this.elements[current_account]?.findIndex(item => {
+            if (item.type !== transaction_elements.CONTRACT || typeof item.data === 'string') return false;
+            return String(item.data?.contract_id) === contractId;
+        });
+
+        if (index !== undefined && index >= 0) {
+            const existing = this.elements[current_account][index].data as TContractInfo;
+            this.pushTransaction({
+                ...existing,
+                ...next,
+                transaction_ids: {
+                    ...(existing.transaction_ids || {}),
+                    ...(next.transaction_ids || {}),
+                },
+            } as TContractInfo);
+        }
+    }
+
     onBotContractEvent(data: TContractInfo) {
-        this.pushTransaction(data);
+        if (!data?.contract_id) return;
+        const ledger = this.deriv_ledger[String(data.contract_id)] || {};
+
+        const merged: TContractInfo = {
+            ...data,
+            ...ledger,
+            transaction_ids: {
+                ...(data.transaction_ids || {}),
+                ...(ledger.transaction_ids || {}),
+            },
+        };
+
+        this.pushTransaction(merged);
     }
 
     pushTransaction(data: TContractInfo) {
@@ -125,6 +210,13 @@ export default class TransactionsStore {
             exit_tick: (data as any).exit_spot || data.exit_tick,
             exit_tick_time: data.exit_tick_time && formatDate(data.exit_tick_time, 'YYYY-M-D HH:mm:ss [GMT]'),
             profit: is_completed ? data.profit : 0,
+            // For early sells the realized amount is sell_price/bid_price. Keep
+            // Deriv's original payout when it exists, but never let a zero/empty
+            // payout hide the actual realized exit value.
+            payout:
+                is_completed && Number(data.payout) === 0 && Number(data.sell_price || data.bid_price) > 0
+                    ? Number(data.sell_price || data.bid_price)
+                    : data.payout,
         };
 
         if (!this.elements[current_account]) {
@@ -207,6 +299,8 @@ export default class TransactionsStore {
         );
 
         return () => {
+            globalObserver.unregister('bot.contract', this.onBotContractEvent);
+            globalObserver.unregister('deriv.transaction', this.onDerivTransactionEvent);
             disposeTransactionElementsListener();
             disposeRecoverContracts();
         };
@@ -230,24 +324,25 @@ export default class TransactionsStore {
         const { contract_info } = summary_card;
         const { currency, profit } = contract;
 
-        if (contract.contract_id !== contract_info?.contract_id) {
-            this.onBotContractEvent(contract);
+        // Always apply the latest Deriv proposal_open_contract snapshot.
+        // The previous contract_id !== summary.contract_id guard dropped the final
+        // sold snapshot when the summary had already received the same contract.
+        this.onBotContractEvent(contract);
 
-            if (contract.contract_id && !this.recovered_transactions.includes(contract.contract_id)) {
-                this.recovered_transactions.push(contract.contract_id);
-            }
-            if (
-                contract.contract_id &&
-                !this.recovered_completed_transactions.includes(contract.contract_id) &&
-                isEnded(contract)
-            ) {
-                this.recovered_completed_transactions.push(contract.contract_id);
+        if (contract.contract_id && !this.recovered_transactions.includes(contract.contract_id)) {
+            this.recovered_transactions.push(contract.contract_id);
+        }
+        if (
+            contract.contract_id &&
+            !this.recovered_completed_transactions.includes(contract.contract_id) &&
+            isEnded(contract)
+        ) {
+            this.recovered_completed_transactions.push(contract.contract_id);
 
-                journal.onLogSuccess({
-                    log_type: profit && profit > 0 ? LogTypes.PROFIT : LogTypes.LOST,
-                    extra: { currency, profit },
-                });
-            }
+            journal.onLogSuccess({
+                log_type: profit && profit > 0 ? LogTypes.PROFIT : LogTypes.LOST,
+                extra: { currency, profit },
+            });
         }
     }
 
