@@ -39,6 +39,8 @@ export default class TransactionsStore {
             transactions: computed,
             onBotContractEvent: action.bound,
             onDerivTransactionEvent: action.bound,
+            onDerivBuyEvent: action.bound,
+            onDerivSellEvent: action.bound,
             pushTransaction: action.bound,
             clear: action.bound,
             registerReactions: action.bound,
@@ -50,6 +52,8 @@ export default class TransactionsStore {
 
         globalObserver.register('bot.contract', this.onBotContractEvent);
         globalObserver.register('deriv.transaction', this.onDerivTransactionEvent);
+        globalObserver.register('deriv.contract.buy', this.onDerivBuyEvent);
+        globalObserver.register('deriv.contract.sell', this.onDerivSellEvent);
         this.disposeReactionsFn = this.registerReactions();
     }
     TRANSACTION_CACHE = 'transaction_cache';
@@ -116,6 +120,31 @@ export default class TransactionsStore {
     toggleTransactionDetailsModal = (is_open: boolean) => {
         this.is_transaction_details_modal_open = is_open;
     };
+
+    onDerivBuyEvent(buy: any) {
+        if (!buy?.contract_id) return;
+        this.onDerivTransactionEvent({
+            ...buy,
+            action: 'buy',
+            transaction_id: buy.transaction_id,
+            buy_price: buy.buy_price,
+            payout: buy.payout,
+            balance_after: buy.balance_after,
+        });
+    }
+
+    onDerivSellEvent(sell: any) {
+        if (!sell?.contract_id) return;
+        this.onDerivTransactionEvent({
+            ...sell,
+            action: 'sell',
+            transaction_id: sell.transaction_id,
+            sell_price: sell.sold_for,
+            bid_price: sell.sold_for,
+            payout: sell.sold_for,
+            balance_after: sell.balance_after,
+        });
+    }
 
     onDerivTransactionEvent(transaction: any) {
         if (!transaction?.contract_id) return;
@@ -303,6 +332,8 @@ export default class TransactionsStore {
         return () => {
             globalObserver.unregister('bot.contract', this.onBotContractEvent);
             globalObserver.unregister('deriv.transaction', this.onDerivTransactionEvent);
+            globalObserver.unregister('deriv.contract.buy', this.onDerivBuyEvent);
+            globalObserver.unregister('deriv.contract.sell', this.onDerivSellEvent);
             disposeTransactionElementsListener();
             disposeRecoverContracts();
         };
