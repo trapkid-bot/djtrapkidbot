@@ -1,4 +1,5 @@
 import { LogTypes } from '../../../constants/messages';
+import { observer as globalObserver } from '../../../utils/observer';
 import { api_base } from '../../api/api-base';
 import { contractStatus, info, log } from '../utils/broadcast';
 import { doUntilDone, getUUID, recoverFromError, tradeOptionToBuy } from '../utils/helpers';
@@ -19,6 +20,10 @@ export default Engine =>
             const onSuccess = response => {
                 // Don't unnecessarily send a forget request for a purchased contract.
                 const { buy } = response;
+
+                // Authoritative Deriv buy ledger: contract ID, buy transaction ID,
+                // buy price, payout and balance_after all come from the buy response.
+                globalObserver.emit('deriv.contract.buy', buy);
 
                 contractStatus({
                     id: 'contract.purchase_received',
